@@ -86,6 +86,7 @@ type Peer struct {
    TxCh chan *Message
    RxCh chan *PeerMessage
    ErrCh chan *PeerError
+   Disconnect chan *Peer
    conn net.Conn
    enc Encoder
    dec Decoder
@@ -103,15 +104,14 @@ func (p *Peer) Write(m *Message) (error) {
 func (p *Peer) Read() (*Message, error) {
    var m Message
    if err := p.dec.Decode(&m); err != nil {
-      fmt.Println("here")
       return nil, err
    }
    return &m, nil
 }
 
-func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, stop chan struct{}) *Peer {
+func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, disconnectCh chan *Peer, stop chan struct{}) *Peer {
    txCh := make(chan *Message)
-   peer := &Peer{txCh, rxCh, errCh, conn, newJSONEncoder(conn), newJSONDecoder(conn)}
+   peer := &Peer{txCh, rxCh, errCh, disconnectCh, conn, newJSONEncoder(conn), newJSONDecoder(conn)}
    ioerr := make(chan struct{})
 
    // go routine to read client's messages
@@ -120,7 +120,11 @@ func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, stop
          msg, err := peer.Read()
          if err != nil {
             close(ioerr)
-            errCh <- &PeerError{peer, err}
+            if err == io.EOF {
+               disconnectCh <- peer
+            } else {
+               errCh <- &PeerError{peer, err}
+            }
             return
          }
          rxCh <- &PeerMessage{peer, msg}
@@ -175,6 +179,11 @@ func handleError(err *PeerError) {
    rmPeer(err.Peer)
 }
 
+func handleDisconnect(p *Peer) {
+   fmt.Printf("peer %s disconnected\n", p.RemoteAddress())
+   rmPeer(p)
+}
+
 func sendAll(msg *Message, me *Peer) {
    for _, peer := range peers {
       if peer != me {
@@ -224,12 +233,15 @@ func main() {
    // local transmit channel...used by chatBot and the UI
    txCh := make(chan *Message)
 
+   // peers notify main when they disconnect on this channel
+   disconnectCh := make(chan *Peer)
+
    // connect to another server?
    var me *Peer
    if addr != "" {
       conn, err := net.Dial("tcp", addr)
       fatalIfErr(err)
-      me := ChatPeer(conn, rxCh, errCh, stop)
+      me := ChatPeer(conn, rxCh, errCh, disconnectCh, stop)
       peers = append(peers, me)
    }
 
@@ -246,7 +258,7 @@ func main() {
             fmt.Println(sr.Err)
             continue
          }
-         peer := ChatPeer(sr.Conn, rxCh, errCh, stop)
+         peer := ChatPeer(sr.Conn, rxCh, errCh, disconnectCh, stop)
          peers = append(peers, peer)
          fmt.Printf("peer joined from %s\n", peer.RemoteAddress())
       case msg := <-rxCh:
@@ -255,6 +267,8 @@ func main() {
          handleError(err)
       case msg := <-txCh:
          sendAll(msg, me)
+      case peer := <-disconnectCh:
+         handleDisconnect(peer)
       }
    }
 }
