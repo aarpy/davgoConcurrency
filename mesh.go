@@ -1,8 +1,11 @@
 package main
 
 import (
+   "encoding/json"
    "errors"
+   "flag"
    "fmt"
+   "io"
    "log"
    "net"
    "strings"
@@ -44,15 +47,34 @@ func Serve(addr string, stop chan struct{}) (chan *ServeResult, error) {
    return ch, nil
 }
 
+type Encoder interface {
+   Encode(v interface{}) error
+}
+
+type Decoder interface {
+   Decode(v interface{}) error
+}
+
 // Message is the data that travels between peers.
 type Message struct {
+   User string
    Text string
+}
+
+func newJSONEncoder(w io.Writer) Encoder {
+   enc := json.NewEncoder(w)
+   return enc
+}
+
+func newJSONDecoder(r io.Reader) Decoder {
+   dec := json.NewDecoder(r)
+   return dec
 }
 
 // PeerMessage is the result of reading from a peer connection.
 type PeerMessage struct {
    Peer *Peer
-   Msg Message
+   Msg *Message
 }
 
 type PeerError struct {
@@ -61,28 +83,47 @@ type PeerError struct {
 }
 
 type Peer struct {
-   Conn net.Conn
    TxCh chan *Message
    RxCh chan *PeerMessage
    ErrCh chan *PeerError
+   conn net.Conn
+   enc Encoder
+   dec Decoder
 }
 
-func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, stop chan struct{}) (*Peer, error) {
+func (p *Peer) RemoteAddress() string {
+   conn := p.conn.(*net.TCPConn)
+   return conn.RemoteAddr().String()
+}
+
+func (p *Peer) Write(m *Message) (error) {
+   return p.enc.Encode(m)
+}
+
+func (p *Peer) Read() (*Message, error) {
+   var m Message
+   if err := p.dec.Decode(&m); err != nil {
+      fmt.Println("here")
+      return nil, err
+   }
+   return &m, nil
+}
+
+func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, stop chan struct{}) *Peer {
    txCh := make(chan *Message)
-   peer := &Peer{conn, txCh, rxCh, errCh}
+   peer := &Peer{txCh, rxCh, errCh, conn, newJSONEncoder(conn), newJSONDecoder(conn)}
    ioerr := make(chan struct{})
 
    // go routine to read client's messages
    go func() {
-      var buf [1024]byte
       for {
-         n, err := conn.Read(buf[:])
+         msg, err := peer.Read()
          if err != nil {
             close(ioerr)
             errCh <- &PeerError{peer, err}
             return
          }
-         rxCh <- &PeerMessage{peer, Message{string(buf[:n])}}
+         rxCh <- &PeerMessage{peer, msg}
       }
    }()
 
@@ -96,19 +137,23 @@ func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, stop
             conn.Close()
             return
          case m := <-txCh:
-            conn.Write([]byte(m.Text))
+            if err := peer.Write(m); err != nil {
+               close(ioerr)
+               return
+            }
          }
       }
    }()
 
-   return &Peer{conn, txCh, rxCh, errCh}, nil
+   return peer
 }
 
-func chatBot(txCh chan *Message, stop chan struct{}) {
+func chatBot(user string, txCh chan *Message, stop chan struct{}) {
    for i := 0;; i++ {
       select {
       case <-time.After(time.Second):
-         txCh <- &Message{"hello" + string(i)}
+         txt := fmt.Sprintf("hello%d", i)
+         txCh <- &Message{user, txt}
       case <-stop:
          fmt.Println("chat bot shutdown normally")
          return
@@ -116,27 +161,100 @@ func chatBot(txCh chan *Message, stop chan struct{}) {
    }
 }
 
+func handleMessage(msg *PeerMessage) {
+   fmt.Printf("%s: %s\n", msg.Msg.User, msg.Msg.Text)
+   for _, peer := range peers {
+      if peer != msg.Peer {
+         peer.TxCh <- msg.Msg
+      }
+   }
+}
+
+func handleError(err *PeerError) {
+   fmt.Println(err.Err)
+   rmPeer(err.Peer)
+}
+
+func sendAll(msg *Message, me *Peer) {
+   for _, peer := range peers {
+      if peer != me {
+         peer.TxCh <- msg
+      }
+   }
+}
+
+func rmPeer(peer *Peer) {
+   for i, p := range peers {
+      if peer == p {
+         peers = append(peers[:i], peers[i + 1:]...)
+         return
+      }
+   }
+}
+
+// global array of connected peers
+var peers []*Peer
+
 func main() {
+   var user string
+   flag.StringVar(&user, "u", "anonymous", "chat user name")
+   var laddr string
+   flag.StringVar(&laddr, "l", ":4242", "address:port to listen on")
+   var addr string
+   flag.StringVar(&addr, "a", "", "address:port to connect to")
+   var bot bool
+   flag.BoolVar(&bot, "b", false, "enables chat bot")
+
+   flag.Parse()
+
+   // closing the stop channel signals all go routines to exit
    stop := make(chan struct{})
-   serve, err := Serve(":4343", stop)
+
+   // server sends newly connected peers back to main on this channel
+   srvCh, err := Serve(laddr, stop)
    fatalIfErr(err)
+   fmt.Printf("listening on %s...\n", laddr)
 
-   var peers []*Peer
+   // peers send messages back to main on this channel
+   rxCh := make(chan *PeerMessage)
 
+   // peers send errors back to main on this channel
+   errCh := make(chan *PeerError)
+
+   // local transmit channel...used by chatBot and the UI
+   txCh := make(chan *Message)
+
+   // connect to another server?
+   var me *Peer
+   if addr != "" {
+      conn, err := net.Dial("tcp", addr)
+      fatalIfErr(err)
+      me := ChatPeer(conn, rxCh, errCh, stop)
+      peers = append(peers, me)
+   }
+
+   // run in chat bot mode?
+   if bot {
+      go chatBot(user, txCh, stop)
+   }
+
+   // main loop
    for {
       select {
-      case sr := <-serve:
+      case sr := <-srvCh:
          if sr.Err != nil {
             fmt.Println(sr.Err)
             continue
          }
-         peer, err := ChatPeer(sr.Conn)
-         if err != nil {
-            fmt.Println(err)
-            continue
-         }
+         peer := ChatPeer(sr.Conn, rxCh, errCh, stop)
          peers = append(peers, peer)
-         chatBot(peer.TxCh)
+         fmt.Printf("peer joined from %s\n", peer.RemoteAddress())
+      case msg := <-rxCh:
+         handleMessage(msg)
+      case err := <-errCh:
+         handleError(err)
+      case msg := <-txCh:
+         sendAll(msg, me)
       }
    }
 }
