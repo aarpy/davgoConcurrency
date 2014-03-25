@@ -1,12 +1,15 @@
 package main
 
 import (
+   "bytes"
    "encoding/json"
    "errors"
    "flag"
    "fmt"
    "io"
+   "io/ioutil"
    "log"
+   "math/rand"
    "net"
    "strings"
    "time"
@@ -109,17 +112,22 @@ func (p *Peer) Read() (*Message, error) {
    return &m, nil
 }
 
-func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, disconnectCh chan *Peer, stop chan struct{}) *Peer {
+func (p *Peer) Close() {
+   close(p.TxCh)
+   p.conn.Close()
+}
+
+func chatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, disconnectCh chan *Peer, stop chan struct{}) *Peer {
    txCh := make(chan *Message)
    peer := &Peer{txCh, rxCh, errCh, disconnectCh, conn, newJSONEncoder(conn), newJSONDecoder(conn)}
-   ioerr := make(chan struct{})
+   readStopped := make(chan struct{})
 
    // go routine to read client's messages
    go func() {
       for {
          msg, err := peer.Read()
          if err != nil {
-            close(ioerr)
+            close(readStopped)
             if err == io.EOF {
                disconnectCh <- peer
             } else {
@@ -133,36 +141,25 @@ func ChatPeer(conn net.Conn, rxCh chan *PeerMessage, errCh chan *PeerError, disc
 
    // go routine to write messages to client
    go func() {
-      defer close(txCh)
+      Loop:
       for {
          select {
+         case <-readStopped:
+            break Loop
          case <-stop:
-            // this should free up the pending read in the other go routine
-            conn.Close()
-            return
+            conn.Close() // to free up the read go routine
+            disconnectCh <- peer
+            break Loop
          case m := <-txCh:
             if err := peer.Write(m); err != nil {
-               close(ioerr)
-               return
+               errCh <- &PeerError{peer, err}
+               break Loop
             }
          }
       }
    }()
 
    return peer
-}
-
-func chatBot(user string, txCh chan *Message, stop chan struct{}) {
-   for i := 0;; i++ {
-      select {
-      case <-time.After(time.Second):
-         txt := fmt.Sprintf("hello%d", i)
-         txCh <- &Message{user, txt}
-      case <-stop:
-         fmt.Println("chat bot shutdown normally")
-         return
-      }
-   }
 }
 
 func handleMessage(msg *PeerMessage) {
@@ -176,12 +173,16 @@ func handleMessage(msg *PeerMessage) {
 
 func handleError(err *PeerError) {
    fmt.Println(err.Err)
-   rmPeer(err.Peer)
+   if rmPeer(err.Peer) {
+      err.Peer.Close()
+   }
 }
 
 func handleDisconnect(p *Peer) {
-   fmt.Printf("peer %s disconnected\n", p.RemoteAddress())
-   rmPeer(p)
+   if rmPeer(p) {
+      p.Close()
+      fmt.Printf("peer %s disconnected\n", p.RemoteAddress())
+   }
 }
 
 func sendAll(msg *Message, me *Peer) {
@@ -192,13 +193,14 @@ func sendAll(msg *Message, me *Peer) {
    }
 }
 
-func rmPeer(peer *Peer) {
+func rmPeer(peer *Peer) bool {
    for i, p := range peers {
       if peer == p {
          peers = append(peers[:i], peers[i + 1:]...)
-         return
+         return true
       }
    }
+   return false
 }
 
 // global array of connected peers
@@ -241,36 +243,95 @@ func main() {
    if addr != "" {
       conn, err := net.Dial("tcp", addr)
       fatalIfErr(err)
-      me := ChatPeer(conn, rxCh, errCh, disconnectCh, stop)
+      me := chatPeer(conn, rxCh, errCh, disconnectCh, stop)
       peers = append(peers, me)
    }
 
    // run in chat bot mode?
    if bot {
+      loadQuotes()
       go chatBot(user, txCh, stop)
    }
 
    // main loop
    for {
       select {
+      case err := <-errCh:
+         handleError(err)
+      case peer := <-disconnectCh:
+         handleDisconnect(peer)
       case sr := <-srvCh:
          if sr.Err != nil {
             fmt.Println(sr.Err)
             continue
          }
-         peer := ChatPeer(sr.Conn, rxCh, errCh, disconnectCh, stop)
+         peer := chatPeer(sr.Conn, rxCh, errCh, disconnectCh, stop)
          peers = append(peers, peer)
          fmt.Printf("peer joined from %s\n", peer.RemoteAddress())
       case msg := <-rxCh:
          handleMessage(msg)
-      case err := <-errCh:
-         handleError(err)
       case msg := <-txCh:
          sendAll(msg, me)
-      case peer := <-disconnectCh:
-         handleDisconnect(peer)
       }
    }
+}
+
+func chatBot(user string, txCh chan *Message, stop chan struct{}) {
+   for fails := 0; fails < 5; {
+      select {
+      case <-stop:
+         fmt.Println("chat bot exiting")
+         return
+      case <-time.After(2000 * time.Millisecond):
+         if len(peers) == 0 {
+            continue
+         }
+         quote, err := GetCachedQuote()
+         if err != nil {
+            fails++
+            continue
+         } else {
+            fails = 0
+         }
+         txCh <- &Message{user, quote.String()}
+      }
+   }
+   fmt.Println("Chat bot died. :-(  R.I.P.")
+}
+
+type Quotes struct {
+   QuoteOfTheDay string
+   Author string
+}
+
+func (q *Quotes) String() string {
+   return fmt.Sprintf(`"%s" --%s`, q.QuoteOfTheDay, q.Author)
+}
+
+var quotes []*Quotes
+
+// Loads file into quote cache.
+func loadQuotes() {
+   b, err := ioutil.ReadFile("quotes.json")
+   if err != nil {
+      log.Fatalln(err)
+   }
+   r := bytes.NewReader(b)
+   dec := json.NewDecoder(r)
+   for {
+      var quote Quotes
+      if err = dec.Decode(&quote); err == io.EOF {
+         break
+      } else if err != nil {
+         log.Fatalln(err)
+      }
+      quotes = append(quotes, &quote)
+   }
+}
+
+// Get a quote from local cache.
+func GetCachedQuote() (*Quotes, error) {
+   return quotes[rand.Intn(len(quotes))], nil
 }
 
 func fatalIfErr(err error) {
@@ -284,3 +345,4 @@ func panicIfErr(err error) {
       panic(err)
    }
 }
+
