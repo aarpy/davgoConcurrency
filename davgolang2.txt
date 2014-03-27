@@ -1,0 +1,46 @@
+% Davidson Golang
+% David Norton
+% March 27, 2014
+
+#
+
+The source for this presentation is available at...
+
+<br />
+[https://github.com/davgolang/davgoConcurrency](https://github.com/davgolang/davgoConcurrency)
+
+# 
+
+## Concurrency
+
+<br />
+Go is good at it!
+
+# 
+
+_Difference between concurrent and parallel?_
+
+. . .
+
+<br />
+<p style="text-align:left;">*_Parallel_* - simultaneous execution</p>
+
+. . .
+
+<p style="text-align:left;">*_Concurrent_* - composition of independently executing tasks</p>
+
+. . .
+
+<br />
+<p style="text-align:left;">Concurrency is about structure and Go provides good tools to express concurrent structures.</p>
+
+# 
+
+_Go tools for structuring independent concurrent tasks?_
+
+<br />
+
+- go routines - to initiate a concurrent task
+- channels - to communicate between go routines
+- select - to wait on multiple channels until one is ready
+

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="generator" content="pandoc">
+  <meta name="author" content="David Norton" />
+  <meta name="dcterms.date" content="2014-03-27" />
+  <title>Davidson Golang</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="reveal.js/css/reveal.min.css"/>
+    <style type="text/css">code{white-space: pre;}</style>
+    <link rel="stylesheet" href="reveal.js/css/theme/simple.css" id="theme">
+  <link rel="stylesheet" media="print" href="reveal.js/css/print/pdf.css" />
+  <!--[if lt IE 9]>
+  <script src="reveal.js/lib/js/html5shiv.js"></script>
+  <![endif]-->
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+<section>
+    <h1 class="title">Davidson Golang</h1>
+    <h2 class="author">David Norton</h2>
+    <h3 class="date">March 27, 2014</h3>
+</section>
+
+<section id="section" class="slide level1">
+<h1></h1>
+<p>The source for this presentation is available at...</p>
+<p><br /> <a href="https://github.com/davgolang/davgoConcurrency">https://github.com/davgolang/davgoConcurrency</a></p>
+</section>
+<section id="section-1" class="slide level1">
+<h1></h1>
+<h2 id="concurrency">Concurrency</h2>
+<p><br /> Go is good at it!</p>
+</section>
+<section id="section-2" class="slide level1">
+<h1></h1>
+<p><em>Difference between concurrent and parallel?</em></p>
+<div class="fragment">
+<br />
+<p style="text-align:left;">
+<em><em>Parallel</em></em> - simultaneous execution
+</p>
+
+</div>
+<div class="fragment">
+<p style="text-align:left;">
+<em><em>Concurrent</em></em> - composition of independently executing tasks
+</p>
+
+</div>
+<div class="fragment">
+<br />
+<p style="text-align:left;">
+Concurrency is about structure and Go provides good tools to express concurrent structures.
+</p>
+
+</div>
+</section>
+<section id="section-3" class="slide level1">
+<h1></h1>
+<p><em>Go tools for structuring independent concurrent tasks?</em></p>
+<p><br /></p>
+<ul>
+<li>go routines - to initiate a concurrent task</li>
+<li>channels - to communicate between go routines</li>
+<li>select - to wait on multiple channels until one is ready</li>
+</ul>
+</section>
+    </div>
+  </div>
+
+  <script src="reveal.js/lib/js/head.min.js"></script>
+  <script src="reveal.js/js/reveal.min.js"></script>
+
+  <script>
+
+      // Full list of configuration options available here:
+      // https://github.com/hakimel/reveal.js#configuration
+      Reveal.initialize({
+        controls: true,
+        progress: true,
+        history: true,
+        center: true,
+        theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+        transition: Reveal.getQueryHash().transition || 'default', // default/cube/page/concave/zoom/linear/fade/none
+
+        // Optional libraries used to extend on reveal.js
+        dependencies: [
+          { src: 'reveal.js/lib/js/classList.js', condition: function() { return !document.body.classList; } },
+          { src: 'reveal.js/plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+          { src: 'reveal.js/plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } },
+//          { src: 'reveal.js/plugin/search/search.js', async: true, condition: function() { return !!document.body.classList; }, }
+//          { src: 'reveal.js/plugin/remotes/remotes.js', async: true, condition: function() { return !!document.body.classList; } }
+]});
+    </script>
+  </body>
+</html>
