@@ -1,3 +1,9 @@
 *.swp
+*.dot
+*.png
 mesh
+meshTest
+chan1
+chan2
+goroutine
 davgoConcurrency
