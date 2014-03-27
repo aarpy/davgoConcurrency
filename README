@@ -1,0 +1,7 @@
+goroutine.go - simple go routine code to play with during presentation
+
+chan1.go & chan2.go - simple channel code to play with
+
+mesh.go - A toy peer-to-peer chat app for demo purposes only.  Each instance of mesh can have one outbound connection and unlimited inbound connections.  The app currenly does not have a human UI.  It opperates in "bot mode" for demo, sending random quotes to connected peers every 5 seconds.
+
+meshTest.go - command line utility to create a random DAG of mesh peers.  It also generates a graphviz dot file and png image of the DAG.  Graphviz must be installed for this tow work, of course.  A core i5 w/ 8GB of RAM can handle ~500 nodes smoothly.  Start more at your own risk.
